@@ -49,6 +49,8 @@ var (
 // testPortConfig holds test-specific port configuration to avoid conflicts
 type testPortConfig struct {
 	EtcdPort             int
+	MultiadminHTTPPort   int
+	MultiadminGRPCPort   int
 	MultigatewayHTTPPort int
 	MultigatewayGRPCPort int
 	MultipoolerGRPCPort  int
@@ -59,6 +61,8 @@ type testPortConfig struct {
 func getTestPortConfig() *testPortConfig {
 	return &testPortConfig{
 		EtcdPort:             utils.GetNextEtcd2Port(),
+		MultiadminHTTPPort:   utils.GetNextPort(),
+		MultiadminGRPCPort:   utils.GetNextPort(),
 		MultigatewayHTTPPort: utils.GetNextPort(),
 		MultigatewayGRPCPort: utils.GetNextPort(),
 		MultipoolerGRPCPort:  utils.GetNextPort(),
@@ -82,6 +86,8 @@ func checkPortAvailable(port int) error {
 func checkAllPortsAvailable(config *testPortConfig) error {
 	ports := []int{
 		config.EtcdPort,
+		config.MultiadminHTTPPort,
+		config.MultiadminGRPCPort,
 		config.MultigatewayHTTPPort,
 		config.MultigatewayGRPCPort,
 		config.MultipoolerGRPCPort,
@@ -159,6 +165,12 @@ func createTestConfigWithPorts(tempDir string, portConfig *testPortConfig) (stri
 			DataDir: filepath.Join(tempDir, "data", "etcd-data"),
 			Port:    portConfig.EtcdPort,
 		},
+		Multiadmin: local.MultiadminConfig{
+			Path:     filepath.Join(binPath, "multiadmin"),
+			HttpPort: portConfig.MultiadminHTTPPort,
+			GrpcPort: portConfig.MultiadminGRPCPort,
+			LogLevel: "info",
+		},
 		Multigateway: local.MultigatewayConfig{
 			Path:     filepath.Join(binPath, "multigateway"),
 			HttpPort: portConfig.MultigatewayHTTPPort,
@@ -178,13 +190,13 @@ func createTestConfigWithPorts(tempDir string, portConfig *testPortConfig) (stri
 		},
 	}
 
-	// Convert the typed config to map[string]interface{} via YAML marshaling
+	// Convert the typed config to map[string]any via YAML marshaling
 	yamlData, err := yaml.Marshal(localConfig)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal local config to YAML: %w", err)
 	}
 
-	var configMap map[string]interface{}
+	var configMap map[string]any
 	if err := yaml.Unmarshal(yamlData, &configMap); err != nil {
 		return "", fmt.Errorf("failed to unmarshal local config to map: %w", err)
 	}
@@ -203,7 +215,7 @@ func createTestConfigWithPorts(tempDir string, portConfig *testPortConfig) (stri
 
 	// Write config file
 	configFile := filepath.Join(tempDir, "multigres.yaml")
-	if err := os.WriteFile(configFile, yamlData, 0644); err != nil {
+	if err := os.WriteFile(configFile, yamlData, 0o644); err != nil {
 		return "", fmt.Errorf("failed to write config file %s: %w", configFile, err)
 	}
 
@@ -350,7 +362,7 @@ func buildMultigresBinary() (string, error) {
 func buildServiceBinaries(tempDir string) error {
 	// Create bin directory inside temp directory
 	binDir := filepath.Join(tempDir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create bin directory: %v", err)
 	}
 
@@ -362,6 +374,7 @@ func buildServiceBinaries(tempDir string) error {
 
 	// Build service binaries (excluding multigres which is built separately)
 	binaries := []string{
+		"multiadmin",
 		"multigateway",
 		"multiorch",
 		"multipooler",
@@ -552,7 +565,7 @@ func TestInitCommandConfigFileCreation(t *testing.T) {
 	assert.Equal(t, "local", config.Provisioner)
 
 	// Extract topology config from provisioner config
-	topoConfig, ok := config.ProvisionerConfig["topology"].(map[string]interface{})
+	topoConfig, ok := config.ProvisionerConfig["topology"].(map[string]any)
 	require.True(t, ok, "topology config should be present")
 
 	assert.Equal(t, "etcd2", topoConfig["backend"])
@@ -571,7 +584,7 @@ func TestInitCommandConfigFileAlreadyExists(t *testing.T) {
 
 	// Create existing config file
 	existingConfig := filepath.Join(tempDir, "multigres.yaml")
-	err = os.WriteFile(existingConfig, []byte("existing: config"), 0644)
+	err = os.WriteFile(existingConfig, []byte("existing: config"), 0o644)
 	require.NoError(t, err)
 
 	// Execute command using the actual binary
@@ -638,8 +651,8 @@ func TestClusterLifecycle(t *testing.T) {
 		require.NoError(t, checkAllPortsAvailable(testPorts),
 			"Test ports should be available before starting cluster")
 
-		t.Logf("Using test ports - etcd:%d, multigateway-http:%d, multigateway-grpc:%d, multipooler:%d, multiorch:%d",
-			testPorts.EtcdPort, testPorts.MultigatewayHTTPPort, testPorts.MultigatewayGRPCPort,
+		t.Logf("Using test ports - etcd:%d, multiadmin-http:%d, multiadmin-grpc:%d, multigateway-http:%d, multigateway-grpc:%d, multipooler:%d, multiorch:%d",
+			testPorts.EtcdPort, testPorts.MultiadminHTTPPort, testPorts.MultiadminGRPCPort, testPorts.MultigatewayHTTPPort, testPorts.MultigatewayGRPCPort,
 			testPorts.MultipoolerGRPCPort, testPorts.MultiorchGRPCPort)
 
 		// Create cluster configuration with test ports
@@ -668,7 +681,7 @@ func TestClusterLifecycle(t *testing.T) {
 		require.NotEmpty(t, serviceStates, "should have at least one service running")
 
 		// Check connectivity for each service
-		expectedServices := []string{"etcd", "multigateway", "multipooler", "multiorch"}
+		expectedServices := []string{"etcd", "multiadmin", "multigateway", "multipooler", "multiorch"}
 		for _, serviceName := range expectedServices {
 			state, exists := serviceStates[serviceName]
 			require.True(t, exists, "service %s should have a state file", serviceName)
@@ -701,7 +714,7 @@ func TestClusterLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		// Extract topology config from provisioner config
-		topoConfig, ok := config.ProvisionerConfig["topology"].(map[string]interface{})
+		topoConfig, ok := config.ProvisionerConfig["topology"].(map[string]any)
 		require.True(t, ok, "topology config should be present")
 
 		cellName := topoConfig["default-cell-name"].(string)

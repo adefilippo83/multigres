@@ -108,7 +108,6 @@ func main() {
 }
 
 func run(cmd *cobra.Command, args []string) error {
-
 	servenv.Init()
 
 	logger := servenv.GetLogger()

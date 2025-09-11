@@ -23,8 +23,6 @@ source build.env
 # Dependency versions
 PROTOC_VERSION="$PROTOC_VER"
 ADDLICENSE_VERSION="$ADDLICENSE_VER"
-PROTOC_GEN_GO_VERSION="$PROTOC_GEN_GO_VER"
-PROTOC_GEN_GO_GRPC_VERSION="$PROTOC_GEN_GO_GRPC_VER"
 ETCD_VERSION="$ETCD_VER"
 
 get_platform() {
@@ -144,22 +142,15 @@ install_etcd() {
     fi
 
     rm "$filename"
+    mkdir -p "$MTROOT/bin"
     ln -snf "$dist/etcd-${version}-${platform}-${arch}/etcd" "$MTROOT/bin/etcd"
     ln -snf "$dist/etcd-${version}-${platform}-${arch}/etcdctl" "$MTROOT/bin/etcdctl"
     cd - > /dev/null
 }
 
 install_go_plugins() {
-    # Install protoc-gen-go if not already installed
-    if ! command -v protoc-gen-go >/dev/null 2>&1; then
-        echo "Installing protoc-gen-go $PROTOC_GEN_GO_VERSION..."
-        go install google.golang.org/protobuf/cmd/protoc-gen-go@$PROTOC_GEN_GO_VERSION
-    fi
-    # Install protoc-gen-go-grpc if not already installed
-    if ! command -v protoc-gen-go-grpc >/dev/null 2>&1; then
-        echo "Installing protoc-gen-go-grpc $PROTOC_GEN_GO_GRPC_VERSION..."
-        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$PROTOC_GEN_GO_GRPC_VERSION
-    fi
+    # Reinstall protoc-gen-go and protoc-gen-go-grpc
+    GOBIN=$MTROOT/bin go install google.golang.org/protobuf/cmd/protoc-gen-go google.golang.org/grpc/cmd/protoc-gen-go-grpc
 }
 
 install_go_tools() {
